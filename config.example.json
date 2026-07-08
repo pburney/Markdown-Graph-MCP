@@ -1,0 +1,10 @@
+{
+  "default_graph": "my-graph",
+  "mcp_tag": "#🦾",
+  "read_only": false,
+  "graphs": {
+    "my-graph": "/path/to/your/Logseq/graph",
+    "work":     "/path/to/your/work/graph",
+    "shared":   {"path": "/path/to/a/shared/graph", "read_only": true}
+  }
+}
