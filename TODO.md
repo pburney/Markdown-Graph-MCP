@@ -18,6 +18,7 @@ Renamed from LogseqMCP on 2026-07-08 — see [docs/adr/0004-project-rename.md](d
 - [ ] **New-graph bootstrap command** — no tool creates a graph from scratch today; all tools operate on graphs already listed in `config.json`. Confirmed against official Logseq docs (2026-07-08): a real graph needs `pages/`, `journals/`, and a `logseq/` directory (`config.edn`, `metadata.edn`, `custom.css`, `custom.js`); `assets/` is optional. If a `new_graph` tool is built, decide whether to bootstrap the `logseq/` dir (so the app can open it later) or skip it entirely for graphs that are meant to stay headless forever — needs a decision either way, don't assume.
 - [ ] **Block-level addressing** — investigate a lightweight alternative to Logseq's live block UUIDs (e.g. line-number or heading-path addressing) for precise in-page edits without requiring the app to ever assign real block IDs.
 - [ ] Tag/namespace exclusion (ACL) — lower priority; revisit only if graphs get shared beyond Paul/Jess.
+- [ ] **Concurrent-write safety** — `write_page`/`set_property`/`capture_to_journal` do plain unlocked file writes; two agents (or clients — now that other MCP clients beyond Claude Code can register this server, see README) writing the same page at once can clobber each other. Deferred until there's an actual multi-source setup in use; revisit then rather than pre-building file locking for a currently-single-writer tool.
 
 ## Explicitly not planned (see ADR-0001)
 - Vector/semantic search (LanceDB + embeddings) — heavy dependency footprint, contradicts the zero-dependency premise

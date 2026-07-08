@@ -63,6 +63,23 @@ list my logseq graphs
 add this to my journal: MCP server is working
 ```
 
+### Other MCP clients
+
+Any client that speaks MCP over stdio (ChatGPT, Gemini, Cursor, etc.) can run the same server — point it at the Python interpreter and `server.py`. Most clients use a config file with an `mcpServers` block, e.g.:
+
+```json
+{
+  "mcpServers": {
+    "markdown-graph": {
+      "command": "/path/to/markdown-graph-mcp/.venv/bin/python",
+      "args": ["/path/to/markdown-graph-mcp/server.py"]
+    }
+  }
+}
+```
+
+No API keys or network access required — the server only reads/writes the local filesystem paths listed in your `config.json`.
+
 ## Configuration
 
 `config.json` maps short graph names to filesystem paths:
