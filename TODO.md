@@ -3,13 +3,13 @@
 Renamed from LogseqMCP on 2026-07-08 — see [docs/adr/0004-project-rename.md](docs/adr/0004-project-rename.md).
 
 ## Open-source prep
-- [ ] `git init` + first commit (no `.git/` exists yet — nothing to scrub, clean start)
+- [x] `git init` + first commit — done 2026-07-08
 - [x] README leads with the headless/no-app-required positioning and links ADR-0001 — done as part of the rename
-- [ ] Add a real `LICENSE` file (MIT — currently only stated in the README footer)
-- [ ] Confirm `config.json` stays gitignored; `config.example.json` is the only config that ships
-- [ ] Scrub hardcoded paths (`/data/BUSINESS/...`, `/data/PERSONAL/...`) from source, tests, and docs
-- [ ] Push to GitHub (README's quick-start now references `github.com/pburney/markdown-graph-mcp.git`)
-- [ ] Add CI (pytest on push) — the public project's biggest maturity edge is its test/CI story; cheap to close
+- [x] Add a real `LICENSE` file (MIT) — done 2026-07-08
+- [x] Confirm `config.json` stays gitignored; `config.example.json` is the only config that ships — verified, already correct
+- [x] Scrub hardcoded paths (`/data/BUSINESS/...`, `/data/PERSONAL/...`) from source, tests, and docs — verified clean; only historical mentions remain in TODO.md/ADRs
+- [x] Push to GitHub — done 2026-07-08, `github.com/pburney/Markdown-Graph-MCP.git`
+- [x] Add CI (pytest on push) — done 2026-07-08, `.github/workflows/tests.yml` matrix over 3.11/3.12/3.13
 
 ## Candidate features (from the mcp-logseq comparison — see docs/adr/0001)
 - [x] **Cross-graph linking / backlinks** — done. `get_backlinks`, `find_entity`, and `list_entities` tools added, keyed off a `mistoria-reference::` page property (`type:detail...`, e.g. `place:90805:Poppy-Street:2308`) rather than a forced page-title/namespace convention. See [docs/adr/0002-entity-reference-convention.md](docs/adr/0002-entity-reference-convention.md).
