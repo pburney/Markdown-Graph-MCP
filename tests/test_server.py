@@ -113,17 +113,17 @@ def mcp_global_readonly(graph, tmp_path):
 # Protocol
 # ---------------------------------------------------------------------------
 
-def test_tools_list_returns_13(mcp):
+def test_tools_list_returns_14(mcp):
     r = mcp("tools/list", {})
     tools = r["result"]["tools"]
-    assert len(tools) == 13
+    assert len(tools) == 14
 
 def test_tools_list_names(mcp):
     r = mcp("tools/list", {})
     names = {t["name"] for t in r["result"]["tools"]}
     expected = {
         "list_graphs", "capture_to_journal", "get_journal",
-        "read_page", "write_page",
+        "read_page", "write_page", "delete_page",
         "search_pages", "list_pages", "list_recent_journals", "set_property",
         "search_content",
         "get_backlinks", "find_entity", "list_entities",
@@ -251,6 +251,75 @@ def test_write_page_overwrites(mcp, graph):
     content = (graph / "pages" / "Simple Page.md").read_text()
     assert "replaced" in content
     assert "First bullet" not in content
+
+def test_write_page_overwrite_backs_up_previous_content(mcp, graph):
+    r = mcp("tools/call", {"name": "write_page", "arguments": {
+        "graph": "test", "title": "Simple Page", "content": "- replaced\n"
+    }})
+    text = r["result"]["content"][0]["text"]
+    assert "backed up" in text.lower()
+    trash_files = list((graph / ".trash").glob("*-Simple Page.md"))
+    assert len(trash_files) == 1
+    assert "First bullet" in trash_files[0].read_text()
+
+def test_write_page_create_mode_does_not_back_up(mcp, graph):
+    mcp("tools/call", {"name": "write_page", "arguments": {
+        "graph": "test", "title": "Brand New No Backup", "content": "- hello\n", "mode": "create"
+    }})
+    assert not (graph / ".trash").exists()
+
+
+# ---------------------------------------------------------------------------
+# delete_page
+# ---------------------------------------------------------------------------
+
+def test_delete_page_moves_to_trash(mcp, graph):
+    r = mcp("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "Simple Page"
+    }})
+    text = r["result"]["content"][0]["text"]
+    assert "Moved" in text
+    assert not (graph / "pages" / "Simple Page.md").exists()
+    trash_files = list((graph / ".trash").glob("*-Simple Page.md"))
+    assert len(trash_files) == 1
+    assert "First bullet" in trash_files[0].read_text()
+
+def test_delete_page_missing(mcp):
+    r = mcp("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "Does Not Exist"
+    }})
+    assert "not found" in r["result"]["content"][0]["text"]
+
+def test_delete_page_namespace(mcp, graph):
+    r = mcp("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "NS/Alpha"
+    }})
+    assert "Moved" in r["result"]["content"][0]["text"]
+    assert not (graph / "pages" / "NS___Alpha.md").exists()
+
+def test_deleted_page_excluded_from_list_pages(mcp, graph):
+    mcp("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "Simple Page"
+    }})
+    r = mcp("tools/call", {"name": "list_pages", "arguments": {"graph": "test"}})
+    assert "Simple Page" not in r["result"]["content"][0]["text"]
+
+def test_deleted_page_excluded_from_search_content(mcp, graph):
+    mcp("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "Simple Page"
+    }})
+    r = mcp("tools/call", {"name": "search_content", "arguments": {
+        "graph": "test", "query": "First bullet"
+    }})
+    assert "No matches" in r["result"]["content"][0]["text"]
+
+def test_readonly_graph_blocks_delete_page(mcp_readonly_graph, graph):
+    r = mcp_readonly_graph("tools/call", {"name": "delete_page", "arguments": {
+        "graph": "test", "title": "Simple Page"
+    }})
+    text = r["result"]["content"][0]["text"]
+    assert "read-only" in text.lower()
+    assert (graph / "pages" / "Simple Page.md").exists()
 
 
 # ---------------------------------------------------------------------------

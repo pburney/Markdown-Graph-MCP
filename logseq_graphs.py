@@ -115,6 +115,37 @@ def page_path(graph_root: Path, title: str) -> Path:
     return pages_dir(graph_root) / (title_to_filename(title) + ".md")
 
 
+def trash_dir(graph_root: Path) -> Path:
+    return graph_root / ".trash"
+
+
+def _backup_timestamp() -> str:
+    return datetime.now().strftime("%Y%m%dT%H%M%S")
+
+
+def backup_page_file(page_file: Path, graph_root: Path) -> Path:
+    """Copy page_file's current content into .trash/<timestamp>-<filename>, creating
+    .trash/ if needed. The original file is left in place. Returns the backup path.
+    .trash/ is a dotdir, so it's already excluded from every read/search tool's
+    rglob (they all skip any path component starting with '.')."""
+    trash = trash_dir(graph_root)
+    trash.mkdir(parents=True, exist_ok=True)
+    backup_path = trash / f"{_backup_timestamp()}-{page_file.name}"
+    backup_path.write_bytes(page_file.read_bytes())
+    return backup_path
+
+
+def delete_page_file(page_file: Path, graph_root: Path) -> Path:
+    """Soft-delete: move page_file into .trash/<timestamp>-<filename>, creating .trash/
+    if needed. Never a hard delete — the file is fully recoverable from .trash/.
+    Returns the trash path."""
+    trash = trash_dir(graph_root)
+    trash.mkdir(parents=True, exist_ok=True)
+    trash_path = trash / f"{_backup_timestamp()}-{page_file.name}"
+    page_file.rename(trash_path)
+    return trash_path
+
+
 # ---------------------------------------------------------------------------
 # Stage 2: search, list, property management
 # ---------------------------------------------------------------------------

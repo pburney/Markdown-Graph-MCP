@@ -6,7 +6,7 @@ Not affiliated with, and not a competitor to, the similarly-scoped [mcp-logseq](
 
 ## What it does
 
-Point it at one or more Logseq graph directories and Claude gains thirteen tools for working with your notes: capturing thoughts to journals, reading and writing pages, searching by content or properties, listing recent entries, maintaining page metadata, and resolving entity references and backlinks *across* graphs — all against the same `.md` files Logseq reads.
+Point it at one or more Logseq graph directories and Claude gains fourteen tools for working with your notes: capturing thoughts to journals, reading and writing pages, searching by content or properties, listing recent entries, maintaining page metadata, and resolving entity references and backlinks *across* graphs — all against the same `.md` files Logseq reads.
 
 | Tool | What it does |
 |------|-------------|
@@ -14,7 +14,8 @@ Point it at one or more Logseq graph directories and Claude gains thirteen tools
 | `capture_to_journal` | Append bullets to a journal page — safe to call while Logseq is open |
 | `get_journal` | Read a journal page (today by default) |
 | `read_page` | Read any page by title, using `/` for namespaces |
-| `write_page` | Write or overwrite a page's full content |
+| `write_page` | Write or overwrite a page's full content — backs up the previous version before an overwrite |
+| `delete_page` | Soft-delete a page to `.trash/` — never a hard delete |
 | `search_content` | Full-text keyword search across pages and journals in any/all graphs |
 | `search_pages` | Filter pages by property values, return selected fields |
 | `list_pages` | List page titles, optionally filtered by namespace prefix |
@@ -147,7 +148,16 @@ mode     — (write_page only) "overwrite" (default) or "create" (fails if the p
 graph    — graph name (optional)
 ```
 
-`write_page` with the default `mode="overwrite"` replaces the entire file — use `mode="create"` instead when you want a hard guarantee against clobbering existing content. Use `set_property` for targeted property updates. Blocked on read-only graphs.
+`write_page` with the default `mode="overwrite"` replaces the entire file — use `mode="create"` instead when you want a hard guarantee against clobbering existing content. Use `set_property` for targeted property updates. Blocked on read-only graphs. When `mode="overwrite"` replaces an existing page, the previous content is backed up to `.trash/` first (see `delete_page` below) — overwriting is never a one-way door.
+
+### delete_page
+
+```
+title  — page title, e.g. "Projects/Old Draft"
+graph  — graph name (optional)
+```
+
+Soft-delete: moves the page to `<graph>/.trash/<timestamp>-<filename>.md` rather than removing it. Trashed pages are automatically excluded from every other tool's reads/searches, since `.trash/` is a dotdir and every tool already skips dot-prefixed path components. Nothing in `.trash/` is auto-purged — clean it up by hand when you're confident you no longer need it. Blocked on read-only graphs. To move a page *between* graphs, use `read_page` → `write_page(mode="create")` on the destination → `delete_page` on the source, verifying the copy before removing the original.
 
 ### search_content
 

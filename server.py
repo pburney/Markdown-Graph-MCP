@@ -99,6 +99,23 @@ TOOLS = [
         },
     },
     {
+        "name": "delete_page",
+        "description": (
+            "Soft-delete a Logseq page: moves it to a `.trash/` directory inside the graph "
+            "rather than permanently removing it, so migrations and cleanups have a built-in "
+            "undo path. Trashed pages are automatically excluded from every other tool's "
+            "searches and listings. Blocked if the graph is configured read-only."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "title": {"type": "string", "description": "Page title. Use '/' for namespaces."},
+                "graph": {"type": "string", "description": "Graph name (optional, defaults to your configured default_graph)."},
+            },
+            "required": ["title"],
+        },
+    },
+    {
         "name": "search_pages",
         "description": (
             "Search Logseq pages by page-level properties. AND logic across filters. "
@@ -413,9 +430,28 @@ def _write_page(args):
             f"Use mode='overwrite' to replace it, or read_page/set_property for targeted edits."
         )
 
+    backup_note = ""
+    if existed:
+        backup_path = lg.backup_page_file(page_file, graph_root)
+        backup_note = f" Previous content backed up to {backup_path}."
+
     page_file.write_text(content, encoding="utf-8")
     action = "Created" if not existed else "Updated"
-    return f"{action} page {title!r} in {graph_name} ({page_file.name})."
+    return f"{action} page {title!r} in {graph_name} ({page_file.name}).{backup_note}"
+
+
+def _delete_page(args):
+    graph_name, graph_root = lg.resolve_graph(args.get("graph"))
+    if lg.graph_is_read_only(graph_name):
+        return _read_only_error(graph_name)
+    title = args.get("title")
+    if not title:
+        return "Error: 'title' is required."
+    page_file = lg.find_page(graph_root, title)
+    if page_file is None:
+        return f"Page {title!r} not found in {graph_name}."
+    trash_path = lg.delete_page_file(page_file, graph_root)
+    return f"Moved {title!r} to trash in {graph_name}: {trash_path}"
 
 
 def _search_pages(args):
@@ -687,6 +723,7 @@ HANDLERS = {
     "get_journal": _get_journal,
     "read_page": _read_page,
     "write_page": _write_page,
+    "delete_page": _delete_page,
     "search_pages": _search_pages,
     "list_pages": _list_pages,
     "list_recent_journals": _list_recent_journals,

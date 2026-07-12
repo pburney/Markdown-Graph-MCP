@@ -463,3 +463,44 @@ def test_list_entity_pages_sorted(graph):
     results = lg.list_entity_pages(graph, "place")
     names = [p["name"] for p in results]
     assert names == sorted(names)
+
+
+# ---------------------------------------------------------------------------
+# delete_page_file / backup_page_file
+# ---------------------------------------------------------------------------
+
+def test_delete_page_file_moves_to_trash(graph):
+    page_file = graph / "pages" / "Simple Page.md"
+    original = page_file.read_text()
+    trash_path = lg.delete_page_file(page_file, graph)
+    assert not page_file.exists()
+    assert trash_path.exists()
+    assert trash_path.parent == graph / ".trash"
+    assert trash_path.read_text() == original
+
+def test_delete_page_file_trash_filename_includes_timestamp(graph):
+    page_file = graph / "pages" / "Simple Page.md"
+    trash_path = lg.delete_page_file(page_file, graph)
+    assert trash_path.name.endswith("-Simple Page.md")
+    assert trash_path.name != "Simple Page.md"
+
+def test_backup_page_file_leaves_original_in_place(graph):
+    page_file = graph / "pages" / "Simple Page.md"
+    original = page_file.read_text()
+    backup_path = lg.backup_page_file(page_file, graph)
+    assert page_file.exists()
+    assert page_file.read_text() == original
+    assert backup_path.read_text() == original
+    assert backup_path.parent == graph / ".trash"
+
+def test_backup_page_file_creates_trash_dir(graph):
+    assert not (graph / ".trash").exists()
+    page_file = graph / "pages" / "Simple Page.md"
+    lg.backup_page_file(page_file, graph)
+    assert (graph / ".trash").is_dir()
+
+def test_trashed_page_excluded_from_iter_pages(graph):
+    page_file = graph / "pages" / "Simple Page.md"
+    lg.delete_page_file(page_file, graph)
+    titles = [lg.filename_to_title(f.stem) for f in lg._iter_pages(graph)]
+    assert "Simple Page" not in titles
