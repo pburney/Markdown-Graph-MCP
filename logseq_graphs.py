@@ -77,27 +77,40 @@ def journal_filename(d: date) -> str:
     return d.strftime("%Y_%m_%d") + ".md"
 
 
+# Config defaults ensured on every write, keyed by a substring that detects
+# whether the setting is already present (so an explicit user choice is left
+# untouched — we only add a key when it is absent).
+#   * file/name-format :triple-lowbar  — REQUIRED for correctness: makes Logseq
+#     decode `___` as the `/` namespace separator to match title_to_filename();
+#     without it a namespaced page shows as a literal `A___B___C` title and any
+#     `[[A/B/C]]` link spawns an empty duplicate.
+#   * journal/page-title-format "yyyy/MM/dd" — preferred default: dates become
+#     namespaced pages (Year/Month/Day), giving an automatic time index.
+DEFAULT_CONFIG_SETTINGS = (
+    ("file/name-format", ":file/name-format :triple-lowbar"),
+    ("journal/page-title-format", ':journal/page-title-format "yyyy/MM/dd"'),
+)
+
+
 def ensure_graph_config(graph_root: Path) -> None:
-    """Guarantee the graph's logseq/config.edn declares the triple-lowbar
-    filename format, so Logseq decodes `___` as the `/` namespace separator to
-    match title_to_filename(). Without it Logseq (in :legacy mode) shows a
-    namespaced page's file as a literal `A___B___C` title and spawns an empty
-    duplicate from any `[[A/B/C]]` link. Idempotent; safe to call before writes.
-    """
+    """Ensure the graph's logseq/config.edn declares the fleet defaults (see
+    DEFAULT_CONFIG_SETTINGS). Only adds a setting when its key is absent, so an
+    explicit user value is never overwritten. Idempotent; safe before writes."""
     cfg = graph_root / "logseq" / "config.edn"
-    fmt_line = " :file/name-format :triple-lowbar\n"
     if cfg.exists() and cfg.stat().st_size > 0:
         text = cfg.read_text(encoding="utf-8")
-        if "file/name-format" in text:
+        additions = [line for key, line in DEFAULT_CONFIG_SETTINGS if key not in text]
+        if not additions:
             return
         brace = text.find("{")
         if brace == -1:
             return  # not a recognizable EDN map; don't touch it
-        cfg.write_text(text[:brace + 1] + "\n" + fmt_line + text[brace + 1:],
-                       encoding="utf-8")
+        insert = "\n" + "".join(f" {a}\n" for a in additions)
+        cfg.write_text(text[:brace + 1] + insert + text[brace + 1:], encoding="utf-8")
     else:
         cfg.parent.mkdir(parents=True, exist_ok=True)
-        cfg.write_text("{:meta/version 1\n" + fmt_line + "}\n", encoding="utf-8")
+        body = "".join(f" {line}\n" for _key, line in DEFAULT_CONFIG_SETTINGS)
+        cfg.write_text("{:meta/version 1\n" + body + "}\n", encoding="utf-8")
 
 
 def mcp_tag() -> str:
