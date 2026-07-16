@@ -338,6 +338,7 @@ def _capture_to_journal(args):
 
     journals = lg.journals_dir(graph_root)
     journals.mkdir(parents=True, exist_ok=True)
+    lg.ensure_graph_config(graph_root)
     journal_file = journals / lg.journal_filename(d)
 
     bullets = []
@@ -421,6 +422,7 @@ def _write_page(args):
 
     pages = lg.pages_dir(graph_root)
     pages.mkdir(parents=True, exist_ok=True)
+    lg.ensure_graph_config(graph_root)
     page_file = lg.page_path(graph_root, title)
     existed = page_file.exists()
 
@@ -580,6 +582,7 @@ def _set_property(args):
     if page_file is None:
         page_file = lg.page_path(graph_root, title)
 
+    lg.ensure_graph_config(graph_root)
     old_value, action = lg.set_page_property(page_file, key, value)
 
     if action == "updated":

@@ -77,6 +77,29 @@ def journal_filename(d: date) -> str:
     return d.strftime("%Y_%m_%d") + ".md"
 
 
+def ensure_graph_config(graph_root: Path) -> None:
+    """Guarantee the graph's logseq/config.edn declares the triple-lowbar
+    filename format, so Logseq decodes `___` as the `/` namespace separator to
+    match title_to_filename(). Without it Logseq (in :legacy mode) shows a
+    namespaced page's file as a literal `A___B___C` title and spawns an empty
+    duplicate from any `[[A/B/C]]` link. Idempotent; safe to call before writes.
+    """
+    cfg = graph_root / "logseq" / "config.edn"
+    fmt_line = " :file/name-format :triple-lowbar\n"
+    if cfg.exists() and cfg.stat().st_size > 0:
+        text = cfg.read_text(encoding="utf-8")
+        if "file/name-format" in text:
+            return
+        brace = text.find("{")
+        if brace == -1:
+            return  # not a recognizable EDN map; don't touch it
+        cfg.write_text(text[:brace + 1] + "\n" + fmt_line + text[brace + 1:],
+                       encoding="utf-8")
+    else:
+        cfg.parent.mkdir(parents=True, exist_ok=True)
+        cfg.write_text("{:meta/version 1\n" + fmt_line + "}\n", encoding="utf-8")
+
+
 def mcp_tag() -> str:
     """Return the MCP tracking tag (e.g. '#🦾'). Configurable via config.json 'mcp_tag' key."""
     tag = _load_config().get("mcp_tag", "#🦾")
