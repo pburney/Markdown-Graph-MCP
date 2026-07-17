@@ -9,7 +9,10 @@ from pathlib import Path
 import pytest
 
 SERVER = Path(__file__).parent.parent / "server.py"
-PYTHON = Path(__file__).parent.parent / ".venv" / "bin" / "python"
+# Use the interpreter running the tests, not a hardcoded local .venv — the venv
+# is gitignored and does not exist on CI (actions/setup-python puts the
+# interpreter on PATH, not at <repo>/.venv/bin/python).
+PYTHON = sys.executable
 
 
 def _start_mcp(tmp_path, config_dict):
