@@ -1,6 +1,7 @@
 """Shared utilities for Logseq graph access."""
 
 import json
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 
@@ -191,14 +192,10 @@ import re as _re
 _SKIP_FIRST = {"logseq", ".logseq"}
 
 
-def parse_page_properties(filepath: Path) -> dict:
-    """Return dict of page-level properties from a Logseq .md file."""
-    props = {"name": filepath.stem, "file": str(filepath)}
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            lines = f.readlines()
-    except (OSError, UnicodeDecodeError):
-        return props
+def _props_from_lines(stem: str, file_str: str, lines) -> dict:
+    """Extract page-level properties from already-read lines. Shared by
+    parse_page_properties (disk read) and the index builder (cached lines)."""
+    props = {"name": stem, "file": file_str}
     for line in lines:
         stripped = line.strip()
         if stripped.startswith("- ") or stripped.startswith("* "):
@@ -207,6 +204,16 @@ def parse_page_properties(filepath: Path) -> dict:
         if m:
             props[m.group(1).lower()] = m.group(2).strip()
     return props
+
+
+def parse_page_properties(filepath: Path) -> dict:
+    """Return dict of page-level properties from a Logseq .md file."""
+    try:
+        with open(filepath, encoding="utf-8") as f:
+            lines = f.readlines()
+    except (OSError, UnicodeDecodeError):
+        return {"name": filepath.stem, "file": str(filepath)}
+    return _props_from_lines(filepath.stem, str(filepath), lines)
 
 
 def _normalize_prop(value: str) -> str:
@@ -234,15 +241,8 @@ def search_pages(graph_root: Path, filters: list, return_props: list) -> list:
     Returns list of dicts.
     """
     results = []
-    root = graph_root.resolve()
-    pages = pages_dir(graph_root)
-    if not pages.exists():
-        return results
-    for md_file in sorted(pages.rglob("*.md")):
-        rel = md_file.resolve().relative_to(root / "pages")
-        if rel.parts[0] in _SKIP_FIRST or any(p.startswith(".") for p in rel.parts):
-            continue
-        props = parse_page_properties(md_file)
+    for e in _page_entries_sorted(refresh_graph(graph_root)):
+        props = e.props
         if all(
             key in props and _matches_filter(props[key], val)
             for key, val in filters
@@ -263,27 +263,14 @@ def search_content(
     """
     results = []
     query_lower = query.lower()
-    candidates = []
+    idx = refresh_graph(graph_root)
 
-    pdir = pages_dir(graph_root)
-    if pdir.exists():
-        for md_file in sorted(pdir.rglob("*.md")):
-            rel = md_file.relative_to(pdir)
-            if rel.parts[0] in _SKIP_FIRST or any(p.startswith(".") for p in rel.parts):
-                continue
-            candidates.append(("page", filename_to_title(md_file.stem), md_file))
-
+    entries = list(_page_entries_sorted(idx))
     if include_journals:
-        jdir = journals_dir(graph_root)
-        if jdir.exists():
-            for md_file in sorted(jdir.glob("*.md")):
-                candidates.append(("journal", md_file.stem.replace("_", "-"), md_file))
+        entries.extend(_journal_entries_sorted(idx))
 
-    for ftype, title, filepath in candidates:
-        try:
-            lines = filepath.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
-            continue
+    for e in entries:
+        lines = e.lines
         matches = []
         for i, line in enumerate(lines):
             if query_lower in line.lower():
@@ -294,7 +281,7 @@ def search_content(
                     "context_after": lines[i + 1:i + 1 + context_lines],
                 })
         if matches:
-            results.append({"type": ftype, "title": title, "file": str(filepath), "matches": matches})
+            results.append({"type": e.kind, "title": e.title, "file": str(e.path), "matches": matches})
 
     return results
 
@@ -422,16 +409,123 @@ def extract_wikilinks(text: str) -> list:
     return out
 
 
-def _iter_pages(graph_root: Path):
-    """Yield every page .md file under graph_root/pages, skipping logseq/.logseq and dotfiles."""
+# ---------------------------------------------------------------------------
+# In-memory content index
+#
+# The MCP server is a long-lived process, so an in-memory index of parsed pages
+# persists across tool calls within a session. Five read tools (search_content,
+# find_backlinks, search_pages, find_entity_pages, list_entity_pages) previously
+# re-walked the graph and re-parsed every file on every call, fanning out across
+# all configured graphs when unscoped. The index caches the per-file parse
+# (lines, page properties, wikilink targets) so a cache hit skips read+parse+regex.
+#
+# Correctness discipline (non-negotiable): mgm is NOT the only writer — Logseq and
+# the user edit files directly — so every access re-walks the directory (to catch
+# new/deleted files) and re-stats each file, rebuilding any entry whose
+# (st_mtime_ns, st_size) stamp changed. We never trust a prior call's entry
+# without re-stat. No persistent store; the index is a ~few-MB derived cache.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class Entry:
+    path: Path                 # the file as walked (unresolved), so str(path) == old "file" value
+    kind: str                  # "page" | "journal"
+    stem: str
+    title: str                 # page: filename_to_title(stem); journal: stem with _ -> -
+    stamp: tuple               # (st_mtime_ns, st_size) — the change key
+    props: dict                # parse_page_properties() output
+    lines: list                # splitlines() of file content
+    link_targets: frozenset    # lowercased [[targets]] union (backlink prefilter)
+
+
+@dataclass
+class GraphIndex:
+    entries: dict = field(default_factory=dict)   # str(md_file) -> Entry
+
+
+_INDEX: dict = {}   # resolved-graph-root str -> GraphIndex
+
+
+def _walk_pages_and_journals(graph_root: Path):
+    """Yield (kind, md_file) for every page and top-level journal .md file,
+    applying the same skip rules the direct-walk tools used: pages skip
+    logseq/.logseq and any dotted path component; journals are the flat top-level
+    *.md set (matching the old jdir.glob('*.md'))."""
     pages = pages_dir(graph_root)
-    if not pages.exists():
-        return
-    for md_file in sorted(pages.rglob("*.md")):
-        rel = md_file.relative_to(pages)
-        if rel.parts[0] in _SKIP_FIRST or any(p.startswith(".") for p in rel.parts):
+    if pages.exists():
+        for md_file in pages.rglob("*.md"):
+            rel = md_file.relative_to(pages)
+            if rel.parts[0] in _SKIP_FIRST or any(p.startswith(".") for p in rel.parts):
+                continue
+            yield "page", md_file
+    journals = journals_dir(graph_root)
+    if journals.exists():
+        for md_file in journals.glob("*.md"):
+            yield "journal", md_file
+
+
+def _build_entry(md_file: Path, kind: str, stamp: tuple) -> Entry:
+    """Read and parse a file into an Entry (called only on a cache miss)."""
+    stem = md_file.stem
+    title = filename_to_title(stem) if kind == "page" else stem.replace("_", "-")
+    file_str = str(md_file)
+    try:
+        text = md_file.read_text(encoding="utf-8")
+    except (OSError, UnicodeDecodeError):
+        # Unreadable: matches old behavior — minimal props, no lines/links, so it
+        # never contributes content/backlink matches and carries no filterable props.
+        return Entry(md_file, kind, stem, title, stamp,
+                     {"name": stem, "file": file_str}, [], frozenset())
+    lines = text.splitlines()
+    props = _props_from_lines(stem, file_str, lines)
+    link_targets = frozenset(t.lower() for t in extract_wikilinks(text))
+    return Entry(md_file, kind, stem, title, stamp, props, lines, link_targets)
+
+
+def refresh_graph(graph_root: Path) -> GraphIndex:
+    """Reconcile the in-memory index for one graph against the filesystem and
+    return it. Always re-walks + re-stats; rebuilds only changed/new files."""
+    key = str(graph_root.resolve())
+    idx = _INDEX.setdefault(key, GraphIndex())
+    current = set()
+    for kind, md_file in _walk_pages_and_journals(graph_root):
+        # str(md_file), not resolve(): the walk always yields the same stable path
+        # string for a given file within a session, so it's a valid cache key
+        # without a per-file realpath() syscall (that dominated the warm path).
+        ekey = str(md_file)
+        current.add(ekey)
+        try:
+            st = md_file.stat()
+        except OSError:
+            current.discard(ekey)
             continue
-        yield md_file
+        stamp = (st.st_mtime_ns, st.st_size)
+        e = idx.entries.get(ekey)
+        if e is None or e.stamp != stamp or e.kind != kind:
+            idx.entries[ekey] = _build_entry(md_file, kind, stamp)
+    for stale in set(idx.entries) - current:
+        del idx.entries[stale]
+    return idx
+
+
+def _page_entries_sorted(idx: GraphIndex):
+    """Page entries in path order (reproduces the old sorted(pages.rglob(...)))."""
+    return sorted((e for e in idx.entries.values() if e.kind == "page"),
+                  key=lambda e: e.path)
+
+
+def _journal_entries_sorted(idx: GraphIndex):
+    """Journal entries in path order (reproduces the old sorted(jdir.glob(...)))."""
+    return sorted((e for e in idx.entries.values() if e.kind == "journal"),
+                  key=lambda e: e.path)
+
+
+def _iter_pages(graph_root: Path):
+    """Yield every page .md file under graph_root/pages, skipping logseq/.logseq and
+    dotfiles. Index-backed; still yields Path objects for callers that want them."""
+    for e in _page_entries_sorted(refresh_graph(graph_root)):
+        yield e.path
 
 
 def find_backlinks(
@@ -446,33 +540,26 @@ def find_backlinks(
     """
     results = []
     target = title.strip().lower()
-    candidates = []
+    idx = refresh_graph(graph_root)
 
-    for md_file in _iter_pages(graph_root):
-        candidates.append(("page", filename_to_title(md_file.stem), md_file))
-
+    entries = list(_page_entries_sorted(idx))
     if include_journals:
-        jdir = journals_dir(graph_root)
-        if jdir.exists():
-            for md_file in sorted(jdir.glob("*.md")):
-                candidates.append(("journal", md_file.stem.replace("_", "-"), md_file))
+        entries.extend(_journal_entries_sorted(idx))
 
-    for ftype, ctitle, filepath in candidates:
-        try:
-            lines = filepath.read_text(encoding="utf-8").splitlines()
-        except (OSError, UnicodeDecodeError):
+    for e in entries:
+        if target not in e.link_targets:   # prefilter: no [[target]] anywhere in file
             continue
         matches = []
-        for i, line in enumerate(lines):
+        for i, line in enumerate(e.lines):
             if any(link.lower() == target for link in extract_wikilinks(line)):
                 matches.append({
                     "line_number": i + 1,
                     "line": line,
-                    "context_before": lines[max(0, i - context_lines):i],
-                    "context_after": lines[i + 1:i + 1 + context_lines],
+                    "context_before": e.lines[max(0, i - context_lines):i],
+                    "context_after": e.lines[i + 1:i + 1 + context_lines],
                 })
         if matches:
-            results.append({"type": ftype, "title": ctitle, "file": str(filepath), "matches": matches})
+            results.append({"type": e.kind, "title": e.title, "file": str(e.path), "matches": matches})
 
     return results
 
@@ -494,9 +581,9 @@ def find_entity_pages(graph_root: Path, name: str, type_filter: str | None = Non
     entity_pages = []
     related_pages = []
 
-    for md_file in _iter_pages(graph_root):
-        props = parse_page_properties(md_file)
-        title = filename_to_title(md_file.stem)
+    for e in _page_entries_sorted(refresh_graph(graph_root)):
+        props = e.props
+        title = e.title
         ref = props.get("mistoria-reference", "")
 
         if ref:
@@ -504,11 +591,11 @@ def find_entity_pages(graph_root: Path, name: str, type_filter: str | None = Non
             if type_lower and ref_type != type_lower:
                 continue
             if title.lower() == name_lower or name_lower in ref.lower():
-                entity_pages.append(props)
+                entity_pages.append(dict(props))
             continue
 
         if type_lower is None and name_lower in title.lower():
-            related_pages.append(props)
+            related_pages.append(dict(props))
 
     return {"entity_pages": entity_pages, "related_pages": related_pages}
 
@@ -523,8 +610,8 @@ def list_entity_pages(graph_root: Path, type_filter: str, filter_text: str | Non
     filter_lower = filter_text.strip().lower() if filter_text else None
     results = []
 
-    for md_file in _iter_pages(graph_root):
-        props = parse_page_properties(md_file)
+    for e in _page_entries_sorted(refresh_graph(graph_root)):
+        props = e.props
         ref = props.get("mistoria-reference", "")
         if not ref:
             continue
@@ -533,6 +620,6 @@ def list_entity_pages(graph_root: Path, type_filter: str, filter_text: str | Non
             continue
         if filter_lower and filter_lower not in ref.lower():
             continue
-        results.append(props)
+        results.append(dict(props))
 
     return sorted(results, key=lambda p: p.get("name", ""))

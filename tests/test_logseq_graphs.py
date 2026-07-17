@@ -504,3 +504,85 @@ def test_trashed_page_excluded_from_iter_pages(graph):
     lg.delete_page_file(page_file, graph)
     titles = [lg.filename_to_title(f.stem) for f in lg._iter_pages(graph)]
     assert "Simple Page" not in titles
+
+
+# ---------------------------------------------------------------------------
+# In-memory content index: reconciliation, invalidation, caching
+#
+# The index is keyed by resolved graph root; every test's `graph` fixture is a
+# unique tmp_path, so entries never leak between tests. These prove the
+# always-reconcile-on-access guarantee: mgm is not the only writer, so external
+# creates/deletes/edits between calls must be reflected.
+# ---------------------------------------------------------------------------
+
+def test_index_detects_new_file(graph):
+    lg.search_content(graph, "First bullet")  # prime the index
+    (graph / "pages" / "Fresh Page.md").write_text(
+        "- contains brandnewtoken here\n", encoding="utf-8")
+    results = lg.search_content(graph, "brandnewtoken")
+    assert [r["title"] for r in results] == ["Fresh Page"]
+
+def test_index_detects_deleted_file(graph):
+    assert lg.search_content(graph, "First bullet")  # prime; Simple Page matches
+    (graph / "pages" / "Simple Page.md").unlink()
+    assert lg.search_content(graph, "First bullet") == []
+    idx = lg.refresh_graph(graph)
+    assert not any(e.path.name == "Simple Page.md" for e in idx.entries.values())
+
+def test_index_detects_external_edit_size_change(graph):
+    assert lg.search_content(graph, "appendedtoken") == []
+    with open(graph / "pages" / "Simple Page.md", "a", encoding="utf-8") as f:
+        f.write("- appendedtoken line\n")   # grows the file -> st_size changes
+    results = lg.search_content(graph, "appendedtoken")
+    assert [r["title"] for r in results] == ["Simple Page"]
+
+def test_index_detects_external_edit_same_size(graph):
+    """Same-length rewrite (st_size unchanged) must still reparse via st_mtime_ns."""
+    import os
+    page = graph / "pages" / "Simple Page.md"
+    assert lg.search_content(graph, "Zecond") == []  # prime; token absent
+    original = page.read_text()
+    replaced = original.replace("Second", "Zecond")  # 6 chars -> 6 chars
+    assert len(replaced) == len(original)
+    page.write_text(replaced, encoding="utf-8")
+    # Force a distinct mtime in case the rewrite landed in the same clock tick.
+    st = page.stat()
+    os.utime(page, ns=(st.st_atime_ns, st.st_mtime_ns + 1_000_000))
+    results = lg.search_content(graph, "Zecond")
+    assert [r["title"] for r in results] == ["Simple Page"]
+
+def test_index_cache_hit_skips_rebuild(graph, monkeypatch):
+    n = len(list(lg._walk_pages_and_journals(graph)))
+    assert n > 0
+    calls = {"n": 0}
+    real_build = lg._build_entry
+    def counting_build(md_file, kind, stamp):
+        calls["n"] += 1
+        return real_build(md_file, kind, stamp)
+    monkeypatch.setattr(lg, "_build_entry", counting_build)
+
+    lg.refresh_graph(graph)
+    assert calls["n"] == n     # first pass: every file parsed
+    calls["n"] = 0
+    lg.refresh_graph(graph)
+    assert calls["n"] == 0     # unchanged files: pure cache hits, no read/parse
+
+def test_index_excludes_logseq_and_dotdirs(graph):
+    (graph / "pages" / "logseq").mkdir()
+    (graph / "pages" / "logseq" / "hidden.md").write_text(
+        "- secretlogseqtoken\n", encoding="utf-8")
+    (graph / "pages" / ".backup").mkdir()
+    (graph / "pages" / ".backup" / "old.md").write_text(
+        "- secretdottoken\n", encoding="utf-8")
+    idx = lg.refresh_graph(graph)
+    names = [e.path.name for e in idx.entries.values()]
+    assert "hidden.md" not in names
+    assert "old.md" not in names
+    assert lg.search_content(graph, "secretlogseqtoken") == []
+    assert lg.search_content(graph, "secretdottoken") == []
+
+def test_index_trash_backup_never_indexed(graph):
+    """.trash sits outside pages/ and journals/, so backups are never walked."""
+    lg.backup_page_file(graph / "pages" / "Simple Page.md", graph)
+    idx = lg.refresh_graph(graph)
+    assert not any(".trash" in str(e.path) for e in idx.entries.values())
