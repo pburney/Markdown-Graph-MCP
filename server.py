@@ -3,6 +3,7 @@
 
 import asyncio
 import json
+import re
 import sys
 from pathlib import Path
 
@@ -38,7 +39,10 @@ TOOLS = [
                     "description": (
                         "Text to capture. Multi-line strings become multiple bullets grouped under the MCP tag. "
                         "Lines not starting with '- ' are auto-prefixed. "
-                        "Preserve tab indentation for nested child blocks."
+                        "Preserve tab indentation for nested child blocks. "
+                        "A bare 'SCHEDULED: <...>' or 'DEADLINE: <...>' line (no dash) attaches as a "
+                        "continuation of the immediately preceding bullet, not a bullet of its own — "
+                        "required for Logseq to recognize repeaters/deadlines."
                     ),
                 },
                 "graph": {
@@ -336,6 +340,9 @@ def _read_only_error(graph_name):
     return f"Error: '{graph_name}' is configured read-only. Write operations are disabled."
 
 
+_CONTINUATION_RE = re.compile(r"^(SCHEDULED|DEADLINE):")
+
+
 def _list_graphs(_args):
     graphs = lg.list_graphs()
     default = lg.default_graph()
@@ -365,14 +372,22 @@ def _capture_to_journal(args):
     journal_file = journals / lg.journal_filename(d)
 
     bullets = []
+    last_bullet_indent = None
     for line in content.splitlines():
         line = line.rstrip()
         if not line.strip():
             continue
         stripped = line.lstrip()
         indent = line[: len(line) - len(stripped)]
-        if not stripped.startswith("- "):
-            line = indent + "- " + stripped
+        if _CONTINUATION_RE.match(stripped) and last_bullet_indent is not None:
+            # SCHEDULED:/DEADLINE: must stay a continuation of the preceding
+            # bullet's block (parent indent + 2 spaces, no dash) or Logseq
+            # won't recognize the repeater/deadline — never a bullet of its own.
+            line = last_bullet_indent + "  " + stripped
+        else:
+            if not stripped.startswith("- "):
+                line = indent + "- " + stripped
+            last_bullet_indent = indent
         bullets.append(line)
 
     if not bullets:

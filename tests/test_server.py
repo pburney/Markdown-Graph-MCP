@@ -205,6 +205,41 @@ def test_capture_preserves_indented_blocks(mcp, graph):
     assert "\t\t\t- Grandchild" in written
     assert "- \t- " not in written  # no double-prefix
 
+def test_capture_scheduled_attaches_to_preceding_bullet(mcp, graph):
+    content = "- LATER Clean pool\n\tSCHEDULED: <2026-07-21 Tue .+1w>"
+    mcp("tools/call", {"name": "capture_to_journal", "arguments": {
+        "graph": "test", "content": content, "date": "2026-03-12"
+    }})
+    written = (graph / "journals" / "2026_03_12.md").read_text()
+    assert "\t- LATER Clean pool" in written
+    assert "\t  SCHEDULED: <2026-07-21 Tue .+1w>" in written
+    assert "- SCHEDULED:" not in written  # must not become its own bullet
+
+def test_capture_deadline_attaches_to_preceding_bullet(mcp, graph):
+    content = "- LATER File taxes\n\tDEADLINE: <2026-04-15 Wed>"
+    mcp("tools/call", {"name": "capture_to_journal", "arguments": {
+        "graph": "test", "content": content, "date": "2026-03-14"
+    }})
+    written = (graph / "journals" / "2026_03_14.md").read_text()
+    assert "\t  DEADLINE: <2026-04-15 Wed>" in written
+    assert "- DEADLINE:" not in written
+
+def test_capture_scheduled_attaches_to_own_preceding_bullet(mcp, graph):
+    """Two LATER/SCHEDULED pairs — each SCHEDULED must attach to its own
+    immediately preceding bullet, not drift onto the first one."""
+    content = (
+        "- LATER Clean pool\n\tSCHEDULED: <2026-07-21 Tue .+1w>\n"
+        "- LATER Weeding\n\tSCHEDULED: <2026-07-28 Tue .+2w>"
+    )
+    mcp("tools/call", {"name": "capture_to_journal", "arguments": {
+        "graph": "test", "content": content, "date": "2026-03-13"
+    }})
+    lines = (graph / "journals" / "2026_03_13.md").read_text().splitlines()
+    pool_i = next(i for i, l in enumerate(lines) if "Clean pool" in l)
+    weeding_i = next(i for i, l in enumerate(lines) if "Weeding" in l)
+    assert "SCHEDULED: <2026-07-21" in lines[pool_i + 1]
+    assert "SCHEDULED: <2026-07-28" in lines[weeding_i + 1]
+
 def test_get_journal_existing(mcp):
     r = mcp("tools/call", {"name": "get_journal", "arguments": {
         "graph": "test", "date": "2026-01-03"
