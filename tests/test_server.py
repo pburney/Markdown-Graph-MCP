@@ -116,10 +116,10 @@ def mcp_global_readonly(graph, tmp_path):
 # Protocol
 # ---------------------------------------------------------------------------
 
-def test_tools_list_returns_14(mcp):
+def test_tools_list_returns_15(mcp):
     r = mcp("tools/list", {})
     tools = r["result"]["tools"]
-    assert len(tools) == 14
+    assert len(tools) == 15
 
 def test_tools_list_names(mcp):
     r = mcp("tools/list", {})
@@ -130,6 +130,7 @@ def test_tools_list_names(mcp):
         "search_pages", "list_pages", "list_recent_journals", "set_property",
         "search_content",
         "get_backlinks", "find_entity", "list_entities",
+        "person_ages",
     }
     assert names == expected
 

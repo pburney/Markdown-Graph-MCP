@@ -8,6 +8,7 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).parent))
 import logseq_graphs as lg
+import age
 
 # ---------------------------------------------------------------------------
 # Tool definitions
@@ -301,6 +302,28 @@ TOOLS = [
                 },
             },
             "required": ["type"],
+        },
+    },
+    {
+        "name": "person_ages",
+        "description": (
+            "Compute people's ages relative to a reference person, from `type:: #Person` pages "
+            "carrying `born::` / `died::` dates. Answers questions like 'when I was 10, how old was "
+            "everyone?' and 'what year was Dad my current age?'. The reference defaults to the "
+            "`relationship:: self` page. Choose exactly ONE mode: at_age, at_year, on_date, mirror, or event."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph": {"type": "string", "description": "Graph name (optional, defaults to your configured default_graph)."},
+                "reference": {"type": "string", "description": "Reference person's page title or alias (optional; defaults to the relationship:: self page)."},
+                "at_age": {"type": "integer", "description": "Everyone's ages at the moment the reference person was this age."},
+                "at_year": {"type": "integer", "description": "Everyone's ages in this calendar year (as of the reference person's birthday that year)."},
+                "on_date": {"type": "string", "description": "Everyone's ages on a specific date, YYYY-MM-DD."},
+                "mirror": {"type": "string", "description": "A person's page title: report the year they were the reference person's CURRENT age, with that moment's ages and nearby events."},
+                "event": {"type": "string", "description": "An event page title: everyone's ages at that event's date."},
+            },
+            "required": [],
         },
     },
 ]
@@ -719,6 +742,82 @@ def _list_entities(args):
     return "\n".join(lines)
 
 
+def _fmt_age_row(r, ref):
+    p = r.person
+    icon = f"{p.icon} " if p.icon else ""
+    tag = "   ← reference" if (ref is not None and p is ref) else ""
+    approx = "~" if r.approx else ""
+    if r.status == "alive":
+        val = f"{approx}{r.age}"
+    elif r.status == "unborn":
+        val = "— not yet born"
+    elif r.status == "deceased":
+        yr = r.person.died.year if r.person.died else "?"
+        val = f"† deceased (died {yr}, aged {approx}{r.age})"
+    else:
+        val = "? (no birth year)"
+    return f"   {icon}{p.title} — {val}{tag}"
+
+
+def _fmt_snapshot(snap):
+    when = f"  ({snap.on.isoformat()})" if snap.on else ""
+    lines = [f"{snap.label}{when}:", ""]
+    unknown = [r.person.title for r in snap.results if r.status == "unknown"]
+    for r in snap.results:
+        if r.status == "unknown":
+            continue
+        lines.append(_fmt_age_row(r, snap.reference))
+    if unknown:
+        lines += ["", f"No birth year yet ({len(unknown)}): " + ", ".join(unknown)]
+    return lines
+
+
+def _person_ages(args):
+    graph_name, graph_root = lg.resolve_graph(args.get("graph"))
+    reference = args.get("reference")
+
+    if args.get("mirror"):
+        m = age.mirror(graph_root, args["mirror"], reference=reference)
+        header = (f"{m.person.title} was {m.ref_current_age} "
+                  f"(={m.reference.title}'s current age) in {m.year} "
+                  f"— {m.on_date.isoformat()}.")
+        lines = [header, ""]
+        lines += _fmt_snapshot(m.snapshot)
+        events = [e for e in age.load_events(graph_root)
+                  if e.date and e.date.has_year and abs(e.date.year - m.year) <= 1]
+        if events:
+            lines += ["", f"Nearby events ({m.year}±1):"]
+            for e in sorted(events, key=lambda e: e.date.year):
+                lines.append(f"   {e.date.year}  {e.title}")
+        return "\n".join(lines)
+
+    if args.get("event"):
+        title = args["event"]
+        ev = next((e for e in age.load_events(graph_root)
+                   if e.title.lower() == title.lower()), None)
+        if ev is None:
+            return f"No event page titled {title!r} in {graph_name}."
+        snap = age.annotate_event(ev, age.load_people(graph_root))
+        if snap is None:
+            return f"Event {ev.title!r} has no year on its date:: property."
+        out = _fmt_snapshot(snap)
+        if not ev.date.is_full:
+            out.append(f"\n(Date is year-only ({ev.date.year}); ages computed as of mid-{ev.date.year}.)")
+        return "\n".join(out)
+
+    kwargs = {}
+    if args.get("at_age") is not None:
+        kwargs["at_age"] = args["at_age"]
+    elif args.get("at_year") is not None:
+        kwargs["at_year"] = args["at_year"]
+    elif args.get("on_date"):
+        kwargs["on_date"] = lg.parse_date(args["on_date"])
+    else:
+        return "Provide one mode: at_age, at_year, on_date, mirror, or event."
+    snap = age.ages_at(graph_root, reference=reference, **kwargs)
+    return "\n".join(_fmt_snapshot(snap))
+
+
 HANDLERS = {
     "list_graphs": _list_graphs,
     "search_content": _search_content,
@@ -734,6 +833,7 @@ HANDLERS = {
     "get_backlinks": _get_backlinks,
     "find_entity": _find_entity,
     "list_entities": _list_entities,
+    "person_ages": _person_ages,
 }
 
 # ---------------------------------------------------------------------------
