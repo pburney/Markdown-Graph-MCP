@@ -330,6 +330,30 @@ TOOLS = [
             "required": [],
         },
     },
+    {
+        "name": "create_graph",
+        "description": (
+            "Create and initialize a new Logseq graph at the specified path. "
+            "Sets up directory structure (pages/, journals/, assets/, logseq/) and writes a correct config.edn. "
+            "Idempotent: safe to call on an existing graph. "
+            "Auto-registers the new graph in config.json if not already present (handles name collisions by picking an alternate name). "
+            "Blocked if markdown-graph-mcp is in read-only mode."
+        ),
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "graph_root": {
+                    "type": "string",
+                    "description": "Absolute or relative filesystem path to the graph root directory.",
+                },
+                "name": {
+                    "type": "string",
+                    "description": "Graph name to register in config.json (optional; derived from dirname if omitted).",
+                },
+            },
+            "required": ["graph_root"],
+        },
+    },
 ]
 
 # ---------------------------------------------------------------------------
@@ -833,6 +857,60 @@ def _person_ages(args):
     return "\n".join(_fmt_snapshot(snap))
 
 
+def _create_graph(args):
+    """Create and initialize a new Logseq graph."""
+    if lg.read_only_mode():
+        return _read_only_error("(global)")
+
+    graph_root = Path(args.get("graph_root", ""))
+    if not graph_root or not str(graph_root).strip():
+        return "Error: graph_root is required."
+
+    try:
+        # Bootstrap the graph
+        resolved = lg.bootstrap_graph(graph_root)
+        graph_name = args.get("name")
+
+        # Auto-register in config.json if markdown-graph-mcp is configured
+        try:
+            config_path = Path(__file__).parent / "config.json"
+            if config_path.exists():
+                config = json.loads(config_path.read_text(encoding="utf-8"))
+                graphs = config.get("graphs", {})
+
+                # Determine the name to register
+                if not graph_name:
+                    graph_name = resolved.name.lower()
+
+                # Check for collision: if name is taken by a different path, pick alternate
+                if graph_name in graphs:
+                    existing_path = graphs[graph_name]
+                    if not isinstance(existing_path, str):
+                        existing_path = existing_path.get("path", "")
+                    if Path(existing_path).resolve() != resolved.resolve():
+                        # Name collision with different path — pick an alternate
+                        counter = 1
+                        original_name = graph_name
+                        while graph_name in graphs:
+                            graph_name = f"{original_name}-{counter}"
+                            counter += 1
+
+                # Register the graph if not already present
+                if graph_name not in graphs:
+                    graphs[graph_name] = str(resolved)
+                    config["graphs"] = graphs
+                    config_path.write_text(json.dumps(config, indent=2), encoding="utf-8")
+                    return f"Graph created and registered as '{graph_name}' at {resolved}"
+                else:
+                    return f"Graph created at {resolved} (already registered as '{graph_name}')"
+            else:
+                return f"Graph created at {resolved} (config.json not found — not auto-registered)"
+        except Exception as e:
+            return f"Graph created at {resolved}, but registration failed: {e}"
+    except Exception as e:
+        return f"Error creating graph: {e}"
+
+
 HANDLERS = {
     "list_graphs": _list_graphs,
     "search_content": _search_content,
@@ -849,6 +927,7 @@ HANDLERS = {
     "find_entity": _find_entity,
     "list_entities": _list_entities,
     "person_ages": _person_ages,
+    "create_graph": _create_graph,
 }
 
 # ---------------------------------------------------------------------------

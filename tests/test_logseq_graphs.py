@@ -475,7 +475,7 @@ def test_delete_page_file_moves_to_trash(graph):
     trash_path = lg.delete_page_file(page_file, graph)
     assert not page_file.exists()
     assert trash_path.exists()
-    assert trash_path.parent == graph / ".trash"
+    assert trash_path.parent == graph / ".recycle"
     assert trash_path.read_text() == original
 
 def test_delete_page_file_trash_filename_includes_timestamp(graph):
@@ -491,13 +491,13 @@ def test_backup_page_file_leaves_original_in_place(graph):
     assert page_file.exists()
     assert page_file.read_text() == original
     assert backup_path.read_text() == original
-    assert backup_path.parent == graph / ".trash"
+    assert backup_path.parent == graph / ".recycle"
 
-def test_backup_page_file_creates_trash_dir(graph):
-    assert not (graph / ".trash").exists()
+def test_backup_page_file_creates_recycle_dir(graph):
+    assert not (graph / ".recycle").exists()
     page_file = graph / "pages" / "Simple Page.md"
     lg.backup_page_file(page_file, graph)
-    assert (graph / ".trash").is_dir()
+    assert (graph / ".recycle").is_dir()
 
 def test_trashed_page_excluded_from_iter_pages(graph):
     page_file = graph / "pages" / "Simple Page.md"
@@ -582,7 +582,7 @@ def test_index_excludes_logseq_and_dotdirs(graph):
     assert lg.search_content(graph, "secretdottoken") == []
 
 def test_index_trash_backup_never_indexed(graph):
-    """.trash sits outside pages/ and journals/, so backups are never walked."""
+    """.recycle sits outside pages/ and journals/, so backups are never walked."""
     lg.backup_page_file(graph / "pages" / "Simple Page.md", graph)
     idx = lg.refresh_graph(graph)
-    assert not any(".trash" in str(e.path) for e in idx.entries.values())
+    assert not any(".recycle" in str(e.path) for e in idx.entries.values())

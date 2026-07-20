@@ -1,9 +1,36 @@
 """Shared utilities for Logseq graph access."""
 
 import json
+import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
+
+# Import markdown-graph-kit primitives (local sibling repo for now)
+_kit_path = Path(__file__).parent.parent / "markdown-graph-kit" / "src"
+if _kit_path.exists() and str(_kit_path) not in sys.path:
+    sys.path.insert(0, str(_kit_path))
+
+from markdown_graph_kit import (
+    title_to_filename,
+    filename_to_title,
+    pages_dir,
+    journals_dir,
+    assets_dir,
+    recycle_dir,
+    logseq_dir,
+    page_path,
+    journal_filename,
+    parse_page_properties,
+    backup_page_file,
+    delete_page_file,
+    set_page_property,
+    ensure_graph_config,
+    bootstrap_graph,
+)
+# Also import internal helpers that are still used locally
+import markdown_graph_kit as _mgk
+_props_from_lines = _mgk._props_from_lines
 
 _CONFIG_PATH = Path(__file__).parent / "config.json"
 _config = None
@@ -55,63 +82,9 @@ def graph_is_read_only(name: str) -> bool:
     return isinstance(entry, dict) and bool(entry.get("read_only", False))
 
 
-def title_to_filename(title: str) -> str:
-    """Convert a page title to its Logseq triple-lowbar filename stem."""
-    return title.replace("/", "___")
-
-
-def filename_to_title(stem: str) -> str:
-    """Convert a triple-lowbar filename stem to a page title."""
-    return stem.replace("___", "/")
-
-
-def pages_dir(graph_root: Path) -> Path:
-    return graph_root / "pages"
-
-
-def journals_dir(graph_root: Path) -> Path:
-    return graph_root / "journals"
-
-
-def journal_filename(d: date) -> str:
-    """Return the journal filename for a given date: YYYY_MM_DD.md"""
-    return d.strftime("%Y_%m_%d") + ".md"
-
-
-# Config defaults ensured on every write, keyed by a substring that detects
-# whether the setting is already present (so an explicit user choice is left
-# untouched — we only add a key when it is absent).
-#   * file/name-format :triple-lowbar  — REQUIRED for correctness: makes Logseq
-#     decode `___` as the `/` namespace separator to match title_to_filename();
-#     without it a namespaced page shows as a literal `A___B___C` title and any
-#     `[[A/B/C]]` link spawns an empty duplicate.
-#   * journal/page-title-format "yyyy/MM/dd" — preferred default: dates become
-#     namespaced pages (Year/Month/Day), giving an automatic time index.
-DEFAULT_CONFIG_SETTINGS = (
-    ("file/name-format", ":file/name-format :triple-lowbar"),
-    ("journal/page-title-format", ':journal/page-title-format "yyyy/MM/dd"'),
-)
-
-
-def ensure_graph_config(graph_root: Path) -> None:
-    """Ensure the graph's logseq/config.edn declares the fleet defaults (see
-    DEFAULT_CONFIG_SETTINGS). Only adds a setting when its key is absent, so an
-    explicit user value is never overwritten. Idempotent; safe before writes."""
-    cfg = graph_root / "logseq" / "config.edn"
-    if cfg.exists() and cfg.stat().st_size > 0:
-        text = cfg.read_text(encoding="utf-8")
-        additions = [line for key, line in DEFAULT_CONFIG_SETTINGS if key not in text]
-        if not additions:
-            return
-        brace = text.find("{")
-        if brace == -1:
-            return  # not a recognizable EDN map; don't touch it
-        insert = "\n" + "".join(f" {a}\n" for a in additions)
-        cfg.write_text(text[:brace + 1] + insert + text[brace + 1:], encoding="utf-8")
-    else:
-        cfg.parent.mkdir(parents=True, exist_ok=True)
-        body = "".join(f" {line}\n" for _key, line in DEFAULT_CONFIG_SETTINGS)
-        cfg.write_text("{:meta/version 1\n" + body + "}\n", encoding="utf-8")
+# Primitives (title_to_filename, filename_to_title, pages_dir, journals_dir,
+# journal_filename, DEFAULT_CONFIG_SETTINGS, ensure_graph_config) are now
+# imported from markdown_graph_kit above.
 
 
 def mcp_tag() -> str:
@@ -135,52 +108,16 @@ _SKIP_DIRS = {"logseq", ".logseq"}
 def find_page(graph_root: Path, title: str) -> Path | None:
     """Find a page file by title (case-insensitive). Returns Path or None."""
     stem = title_to_filename(title).lower()
-    pages = pages_dir(graph_root)
-    if not pages.exists():
+    pg_dir = pages_dir(graph_root)
+    if not pg_dir.exists():
         return None
-    for f in pages.rglob("*.md"):
-        rel = f.relative_to(pages)
+    for f in pg_dir.rglob("*.md"):
+        rel = f.relative_to(pg_dir)
         if rel.parts[0] in _SKIP_DIRS or any(p.startswith(".") for p in rel.parts):
             continue
         if f.stem.lower() == stem:
             return f
     return None
-
-
-def page_path(graph_root: Path, title: str) -> Path:
-    """Return the canonical path for a page (may or may not exist)."""
-    return pages_dir(graph_root) / (title_to_filename(title) + ".md")
-
-
-def trash_dir(graph_root: Path) -> Path:
-    return graph_root / ".trash"
-
-
-def _backup_timestamp() -> str:
-    return datetime.now().strftime("%Y%m%dT%H%M%S")
-
-
-def backup_page_file(page_file: Path, graph_root: Path) -> Path:
-    """Copy page_file's current content into .trash/<timestamp>-<filename>, creating
-    .trash/ if needed. The original file is left in place. Returns the backup path.
-    .trash/ is a dotdir, so it's already excluded from every read/search tool's
-    rglob (they all skip any path component starting with '.')."""
-    trash = trash_dir(graph_root)
-    trash.mkdir(parents=True, exist_ok=True)
-    backup_path = trash / f"{_backup_timestamp()}-{page_file.name}"
-    backup_path.write_bytes(page_file.read_bytes())
-    return backup_path
-
-
-def delete_page_file(page_file: Path, graph_root: Path) -> Path:
-    """Soft-delete: move page_file into .trash/<timestamp>-<filename>, creating .trash/
-    if needed. Never a hard delete — the file is fully recoverable from .trash/.
-    Returns the trash path."""
-    trash = trash_dir(graph_root)
-    trash.mkdir(parents=True, exist_ok=True)
-    trash_path = trash / f"{_backup_timestamp()}-{page_file.name}"
-    page_file.rename(trash_path)
-    return trash_path
 
 
 # ---------------------------------------------------------------------------
@@ -192,29 +129,8 @@ import re as _re
 _SKIP_FIRST = {"logseq", ".logseq"}
 
 
-def _props_from_lines(stem: str, file_str: str, lines) -> dict:
-    """Extract page-level properties from already-read lines. Shared by
-    parse_page_properties (disk read) and the index builder (cached lines)."""
-    props = {"name": stem, "file": file_str}
-    for line in lines:
-        stripped = line.strip()
-        if stripped.startswith("- ") or stripped.startswith("* "):
-            break
-        m = _re.match(r"^([a-zA-Z0-9_-]+)::\s*(.*)", stripped)
-        if m:
-            props[m.group(1).lower()] = m.group(2).strip()
-    return props
-
-
-def parse_page_properties(filepath: Path) -> dict:
-    """Return dict of page-level properties from a Logseq .md file."""
-    try:
-        with open(filepath, encoding="utf-8") as f:
-            lines = f.readlines()
-    except (OSError, UnicodeDecodeError):
-        return {"name": filepath.stem, "file": str(filepath)}
-    return _props_from_lines(filepath.stem, str(filepath), lines)
-
+# Property parsing (_props_from_lines, parse_page_properties) is now imported
+# from markdown_graph_kit above.
 
 def _normalize_prop(value: str) -> str:
     """Strip [[...]] wrappers and leading # for comparison; lowercase."""
@@ -333,60 +249,7 @@ def list_recent_journals(graph_root: Path, n: int = 7) -> list:
     return results
 
 
-def set_page_property(page_path: Path, key: str, value: str) -> tuple:
-    """
-    Set or update a property on a page.
-    Returns (old_value_or_None, 'added' | 'updated').
-    Writes atomically via a temp file.
-    """
-    import tempfile, os
-    key_lower = key.lower().strip()
-    prop_pattern = _re.compile(rf"^{_re.escape(key_lower)}\s*::", _re.IGNORECASE)
-
-    if page_path.exists():
-        lines = page_path.read_text(encoding="utf-8").splitlines(keepends=True)
-    else:
-        lines = []
-
-    new_line = f"{key_lower}:: {value}\n"
-    old_value = None
-    action = None
-
-    # Try to find and replace existing property
-    for i, line in enumerate(lines):
-        if prop_pattern.match(line):
-            m = _re.match(r"^[^:]+::\s*(.*)", line.rstrip())
-            old_value = m.group(1) if m else ""
-            lines[i] = new_line
-            action = "updated"
-            break
-
-    if action is None:
-        # Insert before first bullet, or append
-        insert_at = len(lines)
-        for i, line in enumerate(lines):
-            if line.lstrip().startswith(("- ", "* ")):
-                insert_at = i
-                break
-        lines.insert(insert_at, new_line)
-        action = "added"
-
-    # Atomic write
-    dir_ = page_path.parent
-    dir_.mkdir(parents=True, exist_ok=True)
-    fd, tmp = tempfile.mkstemp(dir=dir_, suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            f.writelines(lines)
-        os.replace(tmp, page_path)
-    except Exception:
-        try:
-            os.unlink(tmp)
-        except OSError:
-            pass
-        raise
-
-    return old_value, action
+# set_page_property is now imported from markdown_graph_kit above.
 
 
 # ---------------------------------------------------------------------------
