@@ -119,7 +119,7 @@ def mcp_global_readonly(graph, tmp_path):
 def test_tools_list_returns_15(mcp):
     r = mcp("tools/list", {})
     tools = r["result"]["tools"]
-    assert len(tools) == 15
+    assert len(tools) == 16
 
 def test_tools_list_names(mcp):
     r = mcp("tools/list", {})
@@ -130,7 +130,7 @@ def test_tools_list_names(mcp):
         "search_pages", "list_pages", "list_recent_journals", "set_property",
         "search_content",
         "get_backlinks", "find_entity", "list_entities",
-        "person_ages",
+        "person_ages", "create_graph",
     }
     assert names == expected
 
@@ -297,7 +297,7 @@ def test_write_page_overwrite_backs_up_previous_content(mcp, graph):
     }})
     text = r["result"]["content"][0]["text"]
     assert "backed up" in text.lower()
-    trash_files = list((graph / ".trash").glob("*-Simple Page.md"))
+    trash_files = list((graph / ".recycle").glob("*-Simple Page.md"))
     assert len(trash_files) == 1
     assert "First bullet" in trash_files[0].read_text()
 
@@ -305,7 +305,7 @@ def test_write_page_create_mode_does_not_back_up(mcp, graph):
     mcp("tools/call", {"name": "write_page", "arguments": {
         "graph": "test", "title": "Brand New No Backup", "content": "- hello\n", "mode": "create"
     }})
-    assert not (graph / ".trash").exists()
+    assert not (graph / ".recycle").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +319,7 @@ def test_delete_page_moves_to_trash(mcp, graph):
     text = r["result"]["content"][0]["text"]
     assert "Moved" in text
     assert not (graph / "pages" / "Simple Page.md").exists()
-    trash_files = list((graph / ".trash").glob("*-Simple Page.md"))
+    trash_files = list((graph / ".recycle").glob("*-Simple Page.md"))
     assert len(trash_files) == 1
     assert "First bullet" in trash_files[0].read_text()
 
