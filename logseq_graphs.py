@@ -1,15 +1,9 @@
 """Shared utilities for Logseq graph access."""
 
 import json
-import sys
 from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
-
-# Import markdown-graph-kit primitives (local sibling repo for now)
-_kit_path = Path(__file__).parent.parent / "markdown-graph-kit" / "src"
-if _kit_path.exists() and str(_kit_path) not in sys.path:
-    sys.path.insert(0, str(_kit_path))
 
 from markdown_graph_kit import (
     title_to_filename,
@@ -28,7 +22,6 @@ from markdown_graph_kit import (
     ensure_graph_config,
     bootstrap_graph,
 )
-# Also import internal helpers that are still used locally
 import markdown_graph_kit as _mgk
 _props_from_lines = _mgk._props_from_lines
 

@@ -1,6 +1,6 @@
 # markdown-graph-mcp
 
-A Model Context Protocol server that gives Claude direct read/write access to Logseq-format markdown knowledge graphs — no external dependencies beyond Python itself, no Logseq app required.
+A Model Context Protocol server that gives Claude direct read/write access to Logseq-format markdown knowledge graphs — no external dependencies beyond Python 3.11+ and the markdown-graph-kit library (installed automatically), no Logseq app required.
 
 Not affiliated with, and not a competitor to, the similarly-scoped [mcp-logseq](https://github.com/ergut/mcp-logseq) project (which talks to Logseq's live app API). This one operates purely on the files — see [docs/adr/0001-file-based-positioning.md](docs/adr/0001-file-based-positioning.md).
 
@@ -27,7 +27,7 @@ Point it at one or more Logseq graph directories and Claude gains fourteen tools
 
 ## Quick Start
 
-**Requirements:** Python 3.8+, [Claude Code](https://claude.ai/code)
+**Requirements:** Python 3.11+, [Claude Code](https://claude.ai/code)
 
 ```bash
 git clone https://github.com/pburney/markdown-graph-mcp.git
@@ -37,11 +37,11 @@ cp config.example.json config.json
 
 Edit `config.json` to point at your Logseq graph directories (see [Configuration](#configuration)).
 
-Create a virtual environment for the test runner (the server itself needs no packages):
+Create a virtual environment and install the project with its dependencies:
 
 ```bash
 python3 -m venv .venv
-.venv/bin/pip install pytest
+.venv/bin/pip install -e .[dev]
 ```
 
 Register with Claude Code:
