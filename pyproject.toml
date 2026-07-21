@@ -11,7 +11,7 @@ dependencies = [
     "markdown-graph-kit @ git+https://github.com/pburney/Markdown-Graph-Kit.git",
 ]
 
-[dependency-groups]
+[project.optional-dependencies]
 dev = [
     "pytest>=8.0.0",
 ]
